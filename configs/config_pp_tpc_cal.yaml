@@ -1,0 +1,24 @@
+input_files_data: [
+  "/data3/fmazzasc/hyp_run_3/pp2024/custom/cbt/AO2D.root",
+  "/data3/fmazzasc/hyp_run_3/pp2025/ah/AO2D.root",
+  "/data3/fmazzasc/hyp_run_3/pp2025/ac/AO2D.root",
+  "/data3/fmazzasc/hyp_run_3/pp2025/ai/AO2D.root",
+  "/data3/fmazzasc/hyp_run_3/pp2025/am/AO2D.root"
+]
+input_files_mc_h3l: ["/data3/fmazzasc/hyp_run_3/mc/LHC25a3/AO2D.root"]
+input_files_mc_h4l: ["/data3/fmazzasc/hyp_run_3/mc/LHC24i5/AO2D_h4l.root"]
+
+output_dir: "/home/fmazzasc/alice/h3l_h4l_rdf/results"
+output_file: "tpc_calibration.root"
+
+selection: {
+  "fPt": "fPt > 0. and fPt < 4",
+  "fCosPA": "fCosPA > 0.99",
+  "fDcaHe": "abs(fDcaHe) > 0.01",
+  "fTPCmomHe": "fTPCmomHe > 0.5",
+  "fAvgClSizeCosLambda": "fAvgClSizeCosLambda > 5"
+}
+
+colliding_system: "pp"
+is_matter: "antimatter"
+calibrate_he_momentum: True
