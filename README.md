@@ -1,4 +1,4 @@
-# Hypertriton and Hyperhydrogen-4 analysis in pp collisions
+# Hyperhydrogen-4 analysis in pp collisions
 
 Combined simultaneous invariant mass fit of ${}^{3}_{\\Lambda}\text{H}$ and ${}^{4}_{\\Lambda}\text{H}$ in pp collisions at $\sqrt{s} = 13.6$ TeV with ALICE Run 3 data, using ROOT RDataFrame.
 
