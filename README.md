@@ -1,6 +1,6 @@
-# Observation of ${}^{4}_{\\Lambda}\text{H}$ in pp collisions at $\sqrt{s} = 13.6$ TeV with ALICE
+# Observation of ${}^{4}_{\Lambda}\text{H}$ in pp collisions at $\sqrt{s} = 13.6$ TeV with ALICE
 
-Analysis code for the search for ${}^{4}_{\\Lambda}\text{H}$ (hyperhydrogen-4) in pp collisions at $\sqrt{s} = 13.6$ TeV using ALICE Run 3 data. The signal is extracted via a simultaneous unbinned fit of the ${}^{3}_{\\Lambda}\text{H}$ and ${}^{4}_{\\Lambda}\text{H}$ invariant mass spectra, where ${}^{3}_{\\Lambda}\text{H}$ serves as a reference signal.
+Analysis code for the search for ${}^{4}_{\Lambda}\text{H}$ (hyperhydrogen-4) in pp collisions at $\sqrt{s} = 13.6$ TeV using ALICE Run 3 data. The signal is extracted via a simultaneous unbinned fit of the ${}^{3}_{\Lambda}\text{H}$ and ${}^{4}_{\Lambda}\text{H}$ invariant mass spectra, where ${}^{3}_{\Lambda}\text{H}$ serves as a reference signal.
 
 ## Project structure
 
@@ -42,8 +42,8 @@ python fit_h3l_h4l_rdf.py --config-file configs/config_pp_h4l_rdf.yaml
 | Key | Description |
 |---|---|
 | `input_files_data` | Paths to data AOD files |
-| `input_files_mc_h3l` | Paths to ${}^{3}_{\\Lambda}\text{H}$ MC AOD files |
-| `input_files_mc_h4l` | Paths to ${}^{4}_{\\Lambda}\text{H}$ MC AOD files |
+| `input_files_mc_h3l` | Paths to ${}^{3}_{\Lambda}\text{H}$ MC AOD files |
+| `input_files_mc_h4l` | Paths to ${}^{4}_{\Lambda}\text{H}$ MC AOD files |
 | `output_dir` | Output directory for results |
 | `output_file` | Output ROOT file name |
 | `selection` | Topological and kinematic cuts |
