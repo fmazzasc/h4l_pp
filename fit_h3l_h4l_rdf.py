@@ -27,6 +27,14 @@ _keep_alive = []
 def main():
     parser = argparse.ArgumentParser(description="Configure the parameters of the script.")
     parser.add_argument("--config-file", dest="config_file", default="", help="Path to the YAML file with configuration.")
+    parser.add_argument(
+        "--chebychev-order",
+        dest="chebychev_order",
+        type=int,
+        choices=(1, 2),
+        default=None,
+        help="Override the Chebyshev background order (1 or 2).",
+    )
     args = parser.parse_args()
     if args.config_file == "":
         print("** No config file provided. Exiting. **")
@@ -45,6 +53,9 @@ def main():
     pid_selections = config.get("pid_selection", {})
     is_matter = config["is_matter"]
     calibrate_he_momentum = config["calibrate_he_momentum"]
+    chebychev_order = args.chebychev_order if args.chebychev_order is not None else int(config.get("chebychev_order", 2))
+    if chebychev_order not in (1, 2):
+        raise ValueError(f"Unsupported Chebyshev order: {chebychev_order}. Expected 1 or 2.")
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -74,14 +85,12 @@ def main():
     if tree_name is None:
         raise RuntimeError("Could not determine input tree name from data file")
 
-
     he3_spectrum = ROOT.TF1('mtexpo', '[2]*x*exp(-TMath::Sqrt([0]*[0]+x*x)/[1])', 0.1, 6)
     he3_spectrum.FixParameter(0, 2.99131)
     he3_spectrum.FixParameter(1, 0.5199)
     he3_spectrum.FixParameter(2, 1.0)
     he4_spectrum = he3_spectrum.Clone('he4_spectrum')
     he4_spectrum.FixParameter(0, 3.72738)
-
 
     data_rdf = utils.correct_and_convert_rdf(
         ROOT.RDataFrame(utils.build_chain(input_file_name_data, tree_name)),
@@ -104,6 +113,7 @@ def main():
     print("------------------------")
     print("Data loaded and converted to RDF. Starting analysis...")
     print("Rejection flag added to MC RDFs. Starting to filter RDFs with selections...")
+
     mc_rdf_h3l_full = mc_rdf_h3l_full.Filter('rej == 1')
     mc_rdf_h4l_full = mc_rdf_h4l_full.Filter('rej == 1')
     mc_rdf_h3l_base_reco = mc_rdf_h3l_full.Filter("fIsReco == true")
@@ -113,7 +123,7 @@ def main():
     mc_rdf_h4l = mc_rdf_h4l_base_reco.Filter(selections_string)
 
     print("-------------------------")
-    print("Data filtered with selections. Starting to create histograms...")
+    print("Data filtered with selections. Generating QA histograms...")
 
     th1_pt_h3l = mc_rdf_h3l.Histo1D(("pt_h3l_mc", "pt_h3l_mc", 100, 0, 10), "fAbsGenPt")
     th1_pt_h4l = mc_rdf_h4l.Histo1D(("pt_h4l_mc", "pt_h4l_mc", 100, 0, 10), "fAbsGenPt")
@@ -148,76 +158,29 @@ def main():
     mass4_max = data_rdf.Max("fMassH4L").GetValue()
     mass3HL = ROOT.RooRealVar("mass3HL", inv_mass_string_h3l, mass3_min, mass3_max, "GeV/c^{2}")
     mass4HL = ROOT.RooRealVar("mass4HL", inv_mass_string_h4l, mass4_min, mass4_max, "GeV/c^{2}")
+
+
+
     mass_roo_mc_h3l = utils.rdf_to_roodataset(mc_rdf_h3l, "fMassH3L", mass3HL, "histo_mc_h3l")
     mass_roo_mc_h4l = utils.rdf_to_roodataset(mc_rdf_h4l, "fMassH4L", mass4HL, "histo_mc_h4l")
 
-    ## Helper to build a double-sided Crystal Ball and fit it to MC
-    def build_and_fit_dscb(name, mass_var, mass_dataset, mu_range, sigma_range):
-        mu = ROOT.RooRealVar(f"mu_{name}", "hypernucl mass", *mu_range, "GeV/c^{2}")
-        sigma = ROOT.RooRealVar(f"sigma_{name}", "hypernucl width", *sigma_range, "GeV/c^{2}")
-        a1 = ROOT.RooRealVar(f"a1_{name}", f"a1_{name}", 0., 5.)
-        a2 = ROOT.RooRealVar(f"a2_{name}", f"a2_{name}", 0., 5.)
-        n1 = ROOT.RooRealVar(f"n1_{name}", f"n1_{name}", 0., 5.)
-        n2 = ROOT.RooRealVar(f"n2_{name}", f"n2_{name}", 0., 5.)
-        pars = [mu, sigma, a1, a2, n1, n2]
-        cb = ROOT.RooCrystalBall(f"cb_{name}", f"cb_{name}", mass_var, mu, sigma, a1, n1, a2, n2)
-        cb.fitTo(mass_dataset)
-        frame = mass_var.frame()
-        frame.SetName(f"frame_{name}_mc")
-        mass_dataset.plotOn(frame)
-        cb.plotOn(frame)
-        for par in pars:
-            if "mu_" in par.GetName():
-                continue
-            if "sigma_" in par.GetName():
-                par.setRange(par.getVal(), par.getVal() * 1.2)
-                continue
-            par.setConstant(True)
-        _keep_alive.extend([mu, sigma, a1, a2, n1, n2, cb])
-        return cb, pars, frame
-
-    signal_h3l, pars_h3l, frame_h3l = build_and_fit_dscb(
+    signal_h3l, pars_h3l, frame_h3l = utils.build_and_fit_dscb(
         "h3l", mass3HL, mass_roo_mc_h3l, (mass3_min, mass3_max), (0.001, 0.0024))
-    signal_h4l, pars_h4l, frame_h4l = build_and_fit_dscb(
+    signal_h4l, pars_h4l, frame_h4l = utils.build_and_fit_dscb(
         "h4l", mass4HL, mass_roo_mc_h4l, (3.91, 3.95), (0.001, 0.004))
     mu3HL, sigma_h3l = pars_h3l[0], pars_h3l[1]
     mu4HL, sigma_h4l = pars_h4l[0], pars_h4l[1]
 
-    ## Helper to build smoothed wrong-mass template via FFT convolution
-    def build_wrong_mass_pdf(name, mass_var, mc_rdf, mass_col, smooth_width=0.003):
-        mass_var.setBins(30)
-        ds = utils.rdf_to_roodataset(mc_rdf, mass_col, mass_var, f"histo_mc_{name}_wrong_mass")
-        dh = ROOT.RooDataHist(f"dh_{name}_wrong_mass", f"dh_{name}_wrong_mass", ROOT.RooArgList(mass_var), ds)
-        histpdf = ROOT.RooHistPdf(f"histpdf_{name}_wrong_mass", f"histpdf_{name}_wrong_mass", ROOT.RooArgSet(mass_var), dh, 0)
-        smooth_mean = ROOT.RooRealVar(f"smooth_mean_{name}", "smooth_mean", 0.0)
-        smooth_sigma = ROOT.RooRealVar(f"smooth_width_{name}", "smooth_width", smooth_width)
-        gauss = ROOT.RooGaussian(f"gauss_kernel_{name}", f"gauss_kernel_{name}", mass_var, smooth_mean, smooth_sigma)
-        mass_var.setBins(10000, "cache")
-        pdf = ROOT.RooFFTConvPdf(f"mc_pdf_{name}_wrong_mass", f"mc_pdf_{name}_wrong_mass", mass_var, histpdf, gauss)
-        pdf.setBufferFraction(0.2)
-        frame = mass_var.frame()
-        frame.SetName(f"frame_{name}_wrong_mass")
-        ds.plotOn(frame)
-        pdf.plotOn(frame, ROOT.RooFit.LineColor(ROOT.kRed))
-        # Keep all intermediates alive to prevent crash at exit
-        _keep_alive.extend([ds, dh, histpdf, smooth_mean, smooth_sigma, gauss, pdf])
-        return pdf, ds, frame
-
-    pdf_h3l_wrong_mass, mass_roo_mc_h3l_wrong_mass, frame_h3l_wrong_mass = build_wrong_mass_pdf(
+    pdf_h3l_wrong_mass, mass_roo_mc_h3l_wrong_mass, frame_h3l_wrong_mass = utils.build_wrong_mass_pdf(
         "h3l", mass3HL, mc_rdf_h4l_no_pid, "fMassH3L")
-    pdf_h4l_wrong_mass, mass_roo_mc_h4l_wrong_mass, frame_h4l_wrong_mass = build_wrong_mass_pdf(
+    pdf_h4l_wrong_mass, mass_roo_mc_h4l_wrong_mass, frame_h4l_wrong_mass = utils.build_wrong_mass_pdf(
         "h4l", mass4HL, mc_rdf_h3l_no_pid, "fMassH4L")
 
-    ## Background PDFs
-    def build_chebychev(name, mass_var):
-        c0 = ROOT.RooRealVar(f"c0_bkg_{name}", f"c0_bkg_{name}", -1, 1.0)
-        c1 = ROOT.RooRealVar(f"c1_bkg_{name}", f"c1_bkg_{name}", -1, 1.0)
-        cheb = ROOT.RooChebychev(f"bkg_{name}", f"bkg_{name}", mass_var, ROOT.RooArgList(c0, c1))
-        _keep_alive.extend([c0, c1, cheb])
-        return cheb
+    mass3HL.setBins(30)
+    mass4HL.setBins(20)
 
-    bkg_h3l = build_chebychev("h3l", mass3HL)
-    bkg_h4l = build_chebychev("h4l", mass4HL)
+    bkg_h3l = utils.build_chebychev("h3l", mass3HL, order=chebychev_order)
+    bkg_h4l = utils.build_chebychev("h4l", mass4HL, order=chebychev_order)
 
     ## Simultaneous fit
     nsig_h3l = ROOT.RooRealVar("nsig_h3l", "signal events", 100, 0, 1e5)
@@ -260,7 +223,6 @@ def main():
 
     pinfo_h3l = utils.make_fit_pavetext(sig_h3l_val, sig_h3l_err, s_b_ratio_h3l, s_b_ratio_h3l_err, mu3HL, sigma_h3l)
     pinfo_h4l = utils.make_fit_pavetext(sig_h4l_val, sig_h4l_err, s_b_ratio_h4l, s_b_ratio_h4l_err, mu4HL, sigma_h4l)
-
 
     ## Efficiency
     print("-------------------------")

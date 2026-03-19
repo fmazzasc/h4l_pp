@@ -20,9 +20,11 @@ selection: {
 }
 
 pid_selection: {
-  "fNSigmaHe4": "fNSigmaHe4 > -2 and fNSigmaHe4 < 4"
+  "fNSigmaHe4": "fNSigmaHe4 > -2 and fNSigmaHe4 < 3"
 }
 
 colliding_system: "pp"
 is_matter: "antimatter"
 calibrate_he_momentum: False
+chebychev_order: 2
+

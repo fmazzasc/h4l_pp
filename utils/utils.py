@@ -213,12 +213,20 @@ def build_wrong_mass_pdf(name, mass_var, mc_rdf, mass_col, smooth_width=0.003):
     return pdf, ds, frame
 
 
-def build_chebychev(name, mass_var):
-    """Build a 2nd-order Chebyshev background PDF."""
-    c0 = ROOT.RooRealVar(f"c0_bkg_{name}", f"c0_bkg_{name}", -1, 1.0)
-    c1 = ROOT.RooRealVar(f"c1_bkg_{name}", f"c1_bkg_{name}", -1, 1.0)
-    cheb = ROOT.RooChebychev(f"bkg_{name}", f"bkg_{name}", mass_var, ROOT.RooArgList(c0, c1))
-    _keep_alive.extend([c0, c1, cheb])
+def build_chebychev(name, mass_var, order=2):
+    """Build a 1st- or 2nd-order Chebyshev background PDF."""
+    if order not in (1, 2):
+        raise ValueError(f"Unsupported Chebyshev order: {order}. Expected 1 or 2.")
+
+    coeffs = ROOT.RooArgList()
+    keep_alive = []
+    for idx in range(order):
+        coeff = ROOT.RooRealVar(f"c{idx}_bkg_{name}", f"c{idx}_bkg_{name}", -1, 1.0)
+        coeffs.add(coeff)
+        keep_alive.append(coeff)
+
+    cheb = ROOT.RooChebychev(f"bkg_{name}", f"bkg_{name}", mass_var, coeffs)
+    _keep_alive.extend([*keep_alive, coeffs, cheb])
     return cheb
 
 
