@@ -12,9 +12,9 @@ output_dir: "/home/fmazzasc/alice/h4l_pp/results"
 output_file: "comb_fit_h4l_pp_2425_rdf.root"
 
 selection: {
-  "fPt": "fPt > 1. and fPt < 4",
-  "fCosPA": "fCosPA > 0.995",
-  "fDcaHe": "abs(fDcaHe) > 0.01",
+  "fPt": "fPt > 1. and fPt < 5",
+  "fCosPA": "fCosPA > 0.99",
+  "fDcaHe": "abs(fDcaHe) > 0.02",
   "fTPCmomHe": "fTPCmomHe > 0.5",
   "fAvgClSizeCosLambda": "fAvgClSizeCosLambda > 5"
 }

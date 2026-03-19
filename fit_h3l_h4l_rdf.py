@@ -159,8 +159,6 @@ def main():
     mass3HL = ROOT.RooRealVar("mass3HL", inv_mass_string_h3l, mass3_min, mass3_max, "GeV/c^{2}")
     mass4HL = ROOT.RooRealVar("mass4HL", inv_mass_string_h4l, mass4_min, mass4_max, "GeV/c^{2}")
 
-
-
     mass_roo_mc_h3l = utils.rdf_to_roodataset(mc_rdf_h3l, "fMassH3L", mass3HL, "histo_mc_h3l")
     mass_roo_mc_h4l = utils.rdf_to_roodataset(mc_rdf_h4l, "fMassH4L", mass4HL, "histo_mc_h4l")
 
@@ -213,6 +211,8 @@ def main():
     ## Signal extraction
     sig_h3l_val, sig_h3l_err = utils.integrate_in_signal_range(signal_h3l, mass3HL, mu3HL, sigma_h3l, nsig_h3l)
     sig_h4l_val, sig_h4l_err = utils.integrate_in_signal_range(signal_h4l, mass4HL, mu4HL, sigma_h4l, n_sig_h4l)
+    sig_val_total_h3l, sig_err_total_h3l = utils.integrate_pdf(signal_h3l, mass3HL, nsig_h3l)
+    sig_val_total_h4l, sig_err_total_h4l = utils.integrate_pdf(signal_h4l, mass4HL, n_sig_h4l)
     bkg_h3l_val, bkg_h3l_err = utils.integrate_pdf(bkg_h3l, mass3HL, n_bkg)
     bkg_h4l_val, bkg_h4l_err = utils.integrate_pdf(bkg_h4l, mass4HL, n_bkg)
     wm_h3l_val, wm_h3l_err = utils.integrate_pdf(pdf_h3l_wrong_mass, mass3HL, n_sig_h4l)
@@ -221,8 +221,8 @@ def main():
     s_b_ratio_h3l, s_b_ratio_h3l_err = utils.s_over_b(sig_h3l_val, bkg_h3l_val, wm_h3l_val, sig_h3l_err, bkg_h3l_err, wm_h3l_err)
     s_b_ratio_h4l, s_b_ratio_h4l_err = utils.s_over_b(sig_h4l_val, bkg_h4l_val, wm_h4l_val, sig_h4l_err, bkg_h4l_err, wm_h4l_err)
 
-    pinfo_h3l = utils.make_fit_pavetext(sig_h3l_val, sig_h3l_err, s_b_ratio_h3l, s_b_ratio_h3l_err, mu3HL, sigma_h3l)
-    pinfo_h4l = utils.make_fit_pavetext(sig_h4l_val, sig_h4l_err, s_b_ratio_h4l, s_b_ratio_h4l_err, mu4HL, sigma_h4l)
+    pinfo_h3l = utils.make_fit_pavetext(sig_val_total_h3l, sig_err_total_h3l, s_b_ratio_h3l, s_b_ratio_h3l_err, mu3HL, sigma_h3l)
+    pinfo_h4l = utils.make_fit_pavetext(sig_val_total_h4l, sig_err_total_h4l, s_b_ratio_h4l, s_b_ratio_h4l_err, mu4HL, sigma_h4l)
 
     ## Efficiency
     print("-------------------------")
