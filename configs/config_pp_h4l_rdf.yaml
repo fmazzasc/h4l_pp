@@ -8,7 +8,7 @@ input_files_data: [
 input_files_mc_h3l: ["/data3/fmazzasc/hyp_run_3/mc/LHC24i5/AO2D_h3l.root"]
 input_files_mc_h4l: ["/data3/fmazzasc/hyp_run_3/mc/LHC24i5/AO2D_h4l.root"]
 
-output_dir: "/home/fmazzasc/alice/h3l_h4l_rdf/results"
+output_dir: "/home/fmazzasc/alice/h4l_pp/results"
 output_file: "comb_fit_h4l_pp_2425_rdf.root"
 
 selection: {

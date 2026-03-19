@@ -1,6 +1,6 @@
 import re
 import uuid
-
+import atexit
 import numpy as np
 import ROOT
 
@@ -90,6 +90,15 @@ int rejectionFlag(double value, const char* funcName, double maxValue) {
 )
 
 
+# ---------------------------------------------------------------------------
+# Global list to prevent RooFit objects from being garbage-collected
+# ---------------------------------------------------------------------------
+_keep_alive = []
+
+
+# ---------------------------------------------------------------------------
+# Selection helpers
+# ---------------------------------------------------------------------------
 def convert_sel_to_string(selection):
     sel_string = ""
     conj = " and "
@@ -107,28 +116,9 @@ def convert_sel_to_rdf_string(selection):
     return sel_string
 
 
-def ndarray2roo(ndarray, var, name="data"):
-    if isinstance(ndarray, ROOT.RooDataSet):
-        return ndarray
-
-    assert isinstance(ndarray, np.ndarray), "Did not receive NumPy array"
-    assert len(ndarray.shape) == 1, "Can only handle 1d array"
-    x = np.zeros(1, dtype=np.float64)
-
-    tree = ROOT.TTree("tree", "tree")
-    tree.Branch(f"{var.GetName()}", x, f"{var.GetName()}/D")
-
-    for value in ndarray:
-        x[0] = value
-        tree.Fill()
-    return ROOT.RooDataSet(
-        ROOT.RooStringView(name),
-        ROOT.RooStringView("dataset from tree"),
-        ROOT.RooArgSet(var),
-        ROOT.RooFit.Import(tree),
-    )
-
-
+# ---------------------------------------------------------------------------
+# RDataFrame / ROOT helpers
+# ---------------------------------------------------------------------------
 def build_chain(file_names, tree_name, folder_prefix="DF_"):
     chain = ROOT.TChain(tree_name)
     for file_name in file_names:
@@ -151,6 +141,150 @@ def redefine_or_define(rdf, column_name, expression):
     return rdf.Define(column_name, expression)
 
 
+def clone_result_hist(result_ptr, name):
+    histo = result_ptr.GetValue().Clone(name)
+    histo.SetDirectory(0)
+    return histo
+
+
+def rdf_to_array(rdf, column):
+    return np.asarray(rdf.AsNumpy([column])[column], dtype=np.float64)
+
+
+def rdf_to_roodataset(rdf, column, roo_var, name="data"):
+    """Convert an RDF column directly to a RooDataSet without a Python loop."""
+    arr = rdf.AsNumpy([column])[column]
+    return ROOT.RooDataSet.from_numpy(
+        {roo_var.GetName(): arr}, ROOT.RooArgSet(roo_var), name=name
+    )
+
+
+# ---------------------------------------------------------------------------
+# RooFit model builders
+# ---------------------------------------------------------------------------
+def build_and_fit_dscb(name, mass_var, mass_dataset, mu_range, sigma_range):
+    """Build a double-sided Crystal Ball, fit to MC, freeze shape params."""
+    mu = ROOT.RooRealVar(f"mu_{name}", "hypernucl mass", *mu_range, "GeV/c^{2}")
+    sigma = ROOT.RooRealVar(f"sigma_{name}", "hypernucl width", *sigma_range, "GeV/c^{2}")
+    a1 = ROOT.RooRealVar(f"a1_{name}", f"a1_{name}", 0., 5.)
+    a2 = ROOT.RooRealVar(f"a2_{name}", f"a2_{name}", 0., 5.)
+    n1 = ROOT.RooRealVar(f"n1_{name}", f"n1_{name}", 0., 5.)
+    n2 = ROOT.RooRealVar(f"n2_{name}", f"n2_{name}", 0., 5.)
+    pars = [mu, sigma, a1, a2, n1, n2]
+    cb = ROOT.RooCrystalBall(f"cb_{name}", f"cb_{name}", mass_var, mu, sigma, a1, n1, a2, n2)
+    cb.fitTo(mass_dataset)
+    frame = mass_var.frame()
+    frame.SetName(f"frame_{name}_mc")
+    mass_dataset.plotOn(frame)
+    cb.plotOn(frame)
+    # Fix shape params; allow mu to float; allow sigma to widen up to 20%
+    for par in pars:
+        if "mu_" in par.GetName():
+            continue
+        if "sigma_" in par.GetName():
+            par.setRange(par.getVal(), par.getVal() * 1.2)
+            continue
+        par.setConstant(True)
+    _keep_alive.extend(pars + [cb])
+    return cb, pars, frame
+
+
+def build_wrong_mass_pdf(name, mass_var, mc_rdf, mass_col, smooth_width=0.003):
+    """Build a smoothed wrong-mass template via FFT convolution of a histogram PDF."""
+    mass_var.setBins(30)
+    ds = rdf_to_roodataset(mc_rdf, mass_col, mass_var, f"histo_mc_{name}_wrong_mass")
+    dh = ROOT.RooDataHist(f"dh_{name}_wrong_mass", f"dh_{name}_wrong_mass",
+                          ROOT.RooArgList(mass_var), ds)
+    histpdf = ROOT.RooHistPdf(f"histpdf_{name}_wrong_mass", f"histpdf_{name}_wrong_mass",
+                              ROOT.RooArgSet(mass_var), dh, 0)
+    smooth_mean = ROOT.RooRealVar(f"smooth_mean_{name}", "smooth_mean", 0.0)
+    smooth_sigma = ROOT.RooRealVar(f"smooth_width_{name}", "smooth_width", smooth_width)
+    gauss = ROOT.RooGaussian(f"gauss_kernel_{name}", f"gauss_kernel_{name}",
+                             mass_var, smooth_mean, smooth_sigma)
+    mass_var.setBins(10000, "cache")
+    pdf = ROOT.RooFFTConvPdf(f"mc_pdf_{name}_wrong_mass", f"mc_pdf_{name}_wrong_mass",
+                             mass_var, histpdf, gauss)
+    pdf.setBufferFraction(0.2)
+    frame = mass_var.frame()
+    frame.SetName(f"frame_{name}_wrong_mass")
+    ds.plotOn(frame)
+    pdf.plotOn(frame, ROOT.RooFit.LineColor(ROOT.kRed))
+    _keep_alive.extend([ds, dh, histpdf, smooth_mean, smooth_sigma, gauss, pdf])
+    return pdf, ds, frame
+
+
+def build_chebychev(name, mass_var):
+    """Build a 2nd-order Chebyshev background PDF."""
+    c0 = ROOT.RooRealVar(f"c0_bkg_{name}", f"c0_bkg_{name}", -1, 1.0)
+    c1 = ROOT.RooRealVar(f"c1_bkg_{name}", f"c1_bkg_{name}", -1, 1.0)
+    cheb = ROOT.RooChebychev(f"bkg_{name}", f"bkg_{name}", mass_var, ROOT.RooArgList(c0, c1))
+    _keep_alive.extend([c0, c1, cheb])
+    return cheb
+
+
+# ---------------------------------------------------------------------------
+# Signal extraction helpers
+# ---------------------------------------------------------------------------
+def integrate_pdf(pdf, mass_var, norm_var, range_name=None):
+    """Integrate a PDF (optionally in a named range) and scale by norm_var."""
+    if range_name:
+        integral = pdf.createIntegral(ROOT.RooArgSet(mass_var), ROOT.RooArgSet(mass_var), range_name)
+    else:
+        integral = pdf.createIntegral(ROOT.RooArgSet(mass_var), ROOT.RooArgSet(mass_var))
+    val = integral.getVal() * norm_var.getVal()
+    err = val * norm_var.getError() / norm_var.getVal() if norm_var.getVal() != 0 else 0
+    return val, err
+
+
+def integrate_in_signal_range(pdf, mass_var, mu, sigma, norm_var, n_sigma=3):
+    """Integrate a PDF in a ±n_sigma window around the mean."""
+    mass_var.setRange("signal", mu.getVal() - n_sigma * sigma.getVal(),
+                      mu.getVal() + n_sigma * sigma.getVal())
+    return integrate_pdf(pdf, mass_var, norm_var, "signal")
+
+
+def s_over_b(sig, bkg, wm, sig_err, bkg_err, wm_err):
+    """Compute signal-over-background ratio with error propagation."""
+    ratio = sig / (bkg + wm)
+    ratio_err = ratio * np.sqrt((sig_err / sig) ** 2 + (bkg_err / bkg) ** 2 + (wm_err / wm) ** 2)
+    return ratio, ratio_err
+
+
+# ---------------------------------------------------------------------------
+# Plotting helpers
+# ---------------------------------------------------------------------------
+def make_fit_pavetext(sig_val, sig_err, sb_ratio, sb_err, mu, sigma):
+    """Create a TPaveText with fit results."""
+    kOrangeC = ROOT.TColor.GetColor('#ff7f00')
+    pinfo = ROOT.TPaveText(0.632, 0.5, 0.932, 0.85, "NDC")
+    pinfo.SetBorderSize(0)
+    pinfo.SetFillStyle(0)
+    pinfo.SetTextAlign(11)
+    pinfo.SetTextFont(42)
+    pinfo.AddText(f"Signal (S): {sig_val:.0f} #pm {sig_err:.0f}")
+    pinfo.AddText(f"S/B (3 #sigma): {sb_ratio:.1f} #pm {sb_err:.1f}")
+    pinfo.AddText("#mu = " + f"{mu.getVal() * 1e3:.2f} #pm {mu.getError() * 1e3:.2f}" + " MeV/#it{c}^{2}")
+    pinfo.AddText("#sigma = " + f"{sigma.getVal() * 1e3:.2f} #pm {sigma.getError() * 1e3:.2f}" + " MeV/#it{c}^{2}")
+    return pinfo
+
+
+def plot_data_fit(mass_var, dataset, model, signal_name, wrong_mass_name, bkg_name, pinfo, frame_name):
+    """Plot data with overlaid fit components."""
+    kOrangeC = ROOT.TColor.GetColor('#ff7f00')
+    frame = mass_var.frame()
+    frame.SetName(frame_name)
+    dataset.plotOn(frame)
+    model.plotOn(frame)
+    model.plotOn(frame, ROOT.RooFit.Components(signal_name), ROOT.RooFit.LineColor(kOrangeC), ROOT.RooFit.LineStyle(2))
+    model.plotOn(frame, ROOT.RooFit.Components(wrong_mass_name), ROOT.RooFit.LineColor(ROOT.kGreen), ROOT.RooFit.LineStyle(2))
+    model.plotOn(frame, ROOT.RooFit.Components(bkg_name), ROOT.RooFit.LineColor(ROOT.kRed), ROOT.RooFit.LineStyle(2))
+    frame.addObject(pinfo)
+    return frame
+
+
+# ---------------------------------------------------------------------------
+# RDF column definitions / corrections
+# ---------------------------------------------------------------------------
 def correct_and_convert_rdf(rdf, calibrate_he3_pt=False, isMC=False, isH4L=False, pt_spectrum=None):
     kDefaultPID = 15
     kPionPID = 2
@@ -239,7 +373,6 @@ def correct_and_convert_rdf(rdf, calibrate_he3_pt=False, isMC=False, isH4L=False
         rdf = rdf.Define("fGenCt", "fGenDecLen * 3.922 / fGenP" if isH4L else "fGenDecLen * 2.99131 / fGenP")
         if "fIsTwoBodyDecay" in column_names:
             rdf = rdf.Filter("fIsTwoBodyDecay == true")
-
         if pt_spectrum is not None:
             func_name, max_bw = _register_rejection_distribution(pt_spectrum, "rej")
             rdf = rdf.Define("rej", f'rejectionFlag(fAbsGenPt, "{func_name}", {max_bw})')
@@ -247,6 +380,9 @@ def correct_and_convert_rdf(rdf, calibrate_he3_pt=False, isMC=False, isH4L=False
     return rdf
 
 
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 def _register_rejection_distribution(distribution, flag_name):
     """Register a ROOT function globally and return (func_name, max_value)."""
     func_name = f"g_{flag_name}_{uuid.uuid4().hex}"
@@ -255,30 +391,10 @@ def _register_rejection_distribution(distribution, flag_name):
     if not hasattr(ROOT, "_rejection_functions"):
         ROOT._rejection_functions = {}
     ROOT._rejection_functions[func_name] = distribution
-    # Register in ROOT's global function list so gROOT->GetFunction() finds a TF1*
     ROOT.gROOT.GetListOfFunctions().Add(distribution)
     max_bw = distribution.GetMaximum()
     return func_name, max_bw
 
-
-def clone_result_hist(result_ptr, name):
-    histo = result_ptr.GetValue().Clone(name)
-    histo.SetDirectory(0)
-    return histo
-
-
-def rdf_to_array(rdf, column):
-    return np.asarray(rdf.AsNumpy([column])[column], dtype=np.float64)
-
-
-def rdf_to_roodataset(rdf, column, roo_var, name="data"):
-    """Convert an RDF column directly to a RooDataSet without a Python loop."""
-    arr = rdf.AsNumpy([column])[column]
-    ds = ROOT.RooDataSet.from_numpy({roo_var.GetName(): arr}, ROOT.RooArgSet(roo_var), name=name)
-    return ds
-
-
-import atexit
 
 def _cleanup_rejection_functions():
     """Remove registered TF1s from ROOT's global list to prevent double-delete at exit."""
@@ -287,5 +403,6 @@ def _cleanup_rejection_functions():
         for func in ROOT._rejection_functions.values():
             func_list.Remove(func)
         ROOT._rejection_functions.clear()
+
 
 atexit.register(_cleanup_rejection_functions)
